@@ -1,0 +1,6 @@
+{
+    "workspace": {
+      "library": ["./rustful.lua"],
+      "checkThirdParty": false
+    }
+  }
