@@ -52,19 +52,17 @@ mod sqlite {
     }
 }
 
+use actix_web::http::Method;
+use actix_web::{web, App, HttpResponse, HttpServer};
+use log::{error, info};
+use mlua::{Function, Lua, LuaOptions, StdLib};
+use std::path::Path;
 use std::{
-    env, fs,
+    env,
     str::FromStr,
     sync::{Arc, RwLock},
     time::Duration,
 };
-
-use actix_web::{
-    http::Method,
-    web::{self},
-    App, HttpResponse, HttpServer, Responder,
-};
-use mlua::{Function, Lua};
 
 struct Handler {
     method: String,
@@ -74,18 +72,9 @@ struct Handler {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let lua = Lua::new_with(StdLib::ALL, LuaOptions::default()).unwrap();
+
     log4rs::init_file("logger.yml", Default::default()).unwrap();
-
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <lua_file>", args[0]);
-        std::process::exit(1);
-    }
-    let lua_file = args[1].clone();
-
-    let lua_code = fs::read_to_string(&lua_file).unwrap();
-
-    let lua = Lua::new();
 
     uuid::inject_module(&lua).unwrap();
     requests::inject_module(&lua).unwrap();
@@ -93,6 +82,14 @@ async fn main() -> std::io::Result<()> {
     json::inject_module(&lua).unwrap();
     sqlite::inject_module(&lua).unwrap();
     lru_cache::inject_module(&lua).unwrap();
+
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 3 {
+        println!("Usage: {} <command> <lua_file>", args[0]);
+        std::process::exit(1);
+    }
+    let command = args[1].clone();
+    let lua_file = args[2].clone();
 
     let handlers = Arc::new(RwLock::new(Vec::new()));
 
@@ -108,7 +105,7 @@ async fn main() -> std::io::Result<()> {
                 });
                 Ok(())
             })
-            .unwrap()
+                .unwrap()
         })
         .unwrap();
 
@@ -119,36 +116,72 @@ async fn main() -> std::io::Result<()> {
                 tokio::time::sleep(Duration::from_millis(n)).await;
                 Ok(())
             })
-            .unwrap(),
+                .unwrap(),
         )
         .unwrap();
 
-    lua.load(lua_code.to_string()).exec_async().await.unwrap();
 
-    HttpServer::new(move || {
-        let mut app = App::new();
-        // .wrap(actix_web::middleware::Logger::default());
+    let compiler = mlua::Compiler::new().set_optimization_level(1).set_debug_level(1).set_coverage_level(0);
+    lua.set_compiler(compiler);
 
-        for handler in handlers.write().unwrap().iter() {
-            let lua_fn = Arc::new(handler.function.clone());
-            app = app.route(
-                &handler.path,
-                web::method(Method::from_str(&handler.method).unwrap()).to(move || {
-                    let lua_fn = Arc::clone(&lua_fn);
-                    async move {
-                        match lua_fn.call_async::<String>(()).await {
-                            Ok(response) => HttpResponse::Ok().body(response),
-                            Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+    match lua.load(Path::new(&lua_file)).exec_async().await {
+        Ok(_) => (),
+        Err(err) => {
+            println!("{err}");
+        }
+    }
+
+
+    match command {
+        command if command == "run" => {
+            info!("Running Lua script: {}", lua_file);
+            info!("Running LUA global main function...");
+            match lua.globals().get::<Function>("main") {
+                Ok(main) => {
+                    match main.call_async::<()>(()).await {
+                        Ok(_) => Ok(()),
+                        Err(err) => {
+                            println!("{err}");
+                            std::process::exit(1);
                         }
                     }
-                }),
-            );
+                }
+                Err(err) => {
+                    error!("Error calling main function: {}", err);
+                    std::process::exit(1);
+                }
+            }
         }
+        command if command == "serve" => {
+            HttpServer::new(move || {
+                let mut app = App::new().wrap(actix_web::middleware::Logger::default());
 
-        app
-    })
-    .shutdown_timeout(5)
-    .bind(("0.0.0.0", 8080))?
-    .run()
-    .await
+                for handler in handlers.write().unwrap().iter() {
+                    let lua_fn = Arc::new(handler.function.clone());
+                    app = app.route(
+                        &handler.path,
+                        web::method(Method::from_str(&handler.method).unwrap()).to(move || {
+                            let lua_fn = Arc::clone(&lua_fn);
+                            async move {
+                                match lua_fn.call_async::<String>(()).await {
+                                    Ok(response) => HttpResponse::Ok().body(response),
+                                    Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+                                }
+                            }
+                        }),
+                    );
+                }
+
+                app
+            })
+                .shutdown_timeout(5)
+                .bind(("0.0.0.0", 8080))?
+                .run()
+                .await
+        }
+        _ => {
+            println!("Unknown command: {}", command);
+            std::process::exit(1);
+        }
+    }
 }

@@ -1,24 +1,24 @@
 use mlua::{Lua, Result};
 
-fn debug(_: &Lua, (string): (String)) -> Result<()> {
+fn debug(_: &Lua, string: String) -> Result<()> {
     log::debug!("{}", string);
 
     Ok(())
 }
 
-fn info(_: &Lua, (string): (String)) -> Result<()> {
+fn info(_: &Lua, string: String) -> Result<()> {
     log::info!("{}", string);
 
     Ok(())
 }
 
-fn warn(_: &Lua, (string): (String)) -> Result<()> {
+fn warn(_: &Lua, string: String) -> Result<()> {
     log::warn!("{}", string);
 
     Ok(())
 }
 
-fn error(_: &Lua, (string): (String)) -> Result<()> {
+fn error(_: &Lua, string: String) -> Result<()> {
     log::error!("{}", string);
 
     Ok(())

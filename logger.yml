@@ -1,0 +1,13 @@
+# logger.yml
+refresh_rate: 30 seconds
+
+appenders:
+  console:
+    kind: console
+    encoder:
+      pattern: "{d} - {l} - {m}{n}"
+
+root:
+  level: debug
+  appenders:
+    - console

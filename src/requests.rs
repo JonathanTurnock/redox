@@ -1,115 +1,115 @@
-use log::{debug, info};
-use mlua::{Lua, Result};
+use log::info;
+use mlua::{IntoLua, Lua, LuaSerdeExt, Result, UserData, UserDataMethods};
+use reqwest::header::HeaderMap;
+use reqwest::{Client, Response};
+use serde_json::{from_str, Value};
 
-async fn get(_lua: &Lua, url: String) -> Result<String> {
-    info!("GET {}", url);
-    let resp = reqwest::get(&url).await.unwrap();
-
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
-
-    debug!("<< {:?}", body);
-    Ok(body)
+struct _Response {
+    status: u16,
+    headers: HeaderMap,
+    body: String,
 }
 
-async fn post(_lua: &Lua, url: String, body: String) -> Result<String> {
-    info!("POST {}", url);
-    let client = reqwest::Client::new();
-    let resp = client.post(&url).body(body).send().await.unwrap();
+impl _Response {
+    async fn new(response: Response) -> Self {
+        let status = response.status().as_u16();
+        let headers = response.headers().to_owned();
+        let body = response.text().await.unwrap();
 
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
-
-    debug!("<< {:?}", body);
-    Ok(body)
+        Self {
+            status,
+            headers,
+            body,
+        }
+    }
 }
 
-async fn put(_lua: &Lua, url: String, body: String) -> Result<String> {
-    info!("PUT {}", url);
-    let client = reqwest::Client::new();
-    let resp = client.put(&url).body(body).send().await.unwrap();
+impl UserData for _Response {
+    fn add_methods<'lua, M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("get_status", |_, this, _: ()| {
+            Ok(this.status)
+        });
 
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
+        methods.add_method("get_headers", |lua, this, _: ()| {
+            let headers = lua.create_table().unwrap();
+            for (key, value) in this.headers.iter() {
+                headers.set(key.as_str(), value.to_str().unwrap()).unwrap();
+            }
+            Ok(headers)
+        });
 
-    debug!("<< {:?}", body);
-    Ok(body)
+        methods.add_method("get_header_value", |lua: &Lua, this, key: String| {
+            let value = this.headers.get(key.as_str()).unwrap().to_str().unwrap();
+            Ok(value.into_lua(lua).unwrap())
+        });
+
+        methods.add_method("get_text", |_, this, _: ()| {
+            Ok(this.body.clone())
+        });
+
+        methods.add_method("get_json", |lua, this, _: ()| {
+            let serde_value = from_str::<Value>(&this.body).unwrap();
+            let lua_value = lua.to_value(&serde_value).unwrap();
+            Ok(lua_value)
+        });
+    }
 }
 
-async fn delete(_lua: &Lua, url: String) -> Result<String> {
-    info!("DELETE {}", url);
-    let client = reqwest::Client::new();
-    let resp = client.delete(&url).send().await.unwrap();
-
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
-
-    debug!("<< {:?}", body);
-    Ok(body)
+struct _Requests {
+    client: Client,
 }
 
-async fn patch(_lua: &Lua, url: String, body: String) -> Result<String> {
-    info!("PATCH {}", url);
-    let client = reqwest::Client::new();
-    let resp = client.patch(&url).body(body).send().await.unwrap();
-
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
-
-    debug!("<< {:?}", body);
-    Ok(body)
+impl _Requests {
+    fn new() -> Result<_Requests> {
+        Ok(Self { client: Client::new() })
+    }
 }
 
-async fn head(_lua: &Lua, url: String) -> Result<String> {
-    info!("HEAD {}", url);
-    let client = reqwest::Client::new();
-    let resp = client.head(&url).send().await.unwrap();
+impl UserData for _Requests {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_async_method("get", |lua: Lua, this, url: String| async move {
+            info!("GET {}", url);
+            let response = this.client.get(&url).send().await.unwrap();
+            _Response::new(response).await.into_lua(&lua)
+        });
 
-    info!("Status: {}", resp.status());
-    let body = resp.text().await.unwrap();
+        methods.add_async_method("post", |lua: Lua, this, (url, body): (String, String)| async move {
+            info!("POST {}", url);
+            let response = this.client.post(&url).body(body).send().await.unwrap();
+            _Response::new(response).await.into_lua(&lua)
+        });
 
-    debug!("<< {:?}", body);
-    Ok(body)
+        methods.add_async_method("put", |lua: Lua, this, (url, body): (String, String)| async move {
+            info!("PUT {}", url);
+            let response = this.client.put(&url).body(body).send().await.unwrap();
+            _Response::new(response).await.into_lua(&lua)
+        });
+
+        methods.add_async_method("delete", |lua: Lua, this, url: String| async move {
+            info!("DELETE {}", url);
+            let response = this.client.delete(&url).send().await.unwrap();
+            _Response::new(response).await.into_lua(&lua)
+        });
+    }
 }
+
 
 pub fn inject_module(lua: &Lua) -> Result<()> {
     let m = lua.create_table()?;
     m.set(
+        "client",
+        lua.create_async_function(|_lua: Lua, _url: String| async move {
+            _Requests::new().map(|requests| _lua.create_userdata(requests))
+        })?,
+    )?;
+
+    m.set(
         "get",
-        lua.create_async_function(|_lua: Lua, url: String| async move { get(&_lua, url).await })?,
-    )?;
-
-    m.set(
-        "post",
-        lua.create_async_function(|_lua: Lua, (url, body): (String, String)| async move {
-            post(&_lua, url, body).await
+        lua.create_async_function(|lua: Lua, url: String| async move {
+            info!("GET {}", url);
+            let response = reqwest::get(&url).await.unwrap();
+            _Response::new(response).await.into_lua(&lua)
         })?,
-    )?;
-
-    m.set(
-        "put",
-        lua.create_async_function(|_lua: Lua, (url, body): (String, String)| async move {
-            put(&_lua, url, body).await
-        })?,
-    )?;
-
-    m.set(
-        "delete",
-        lua.create_async_function(
-            |_lua: Lua, url: String| async move { delete(&_lua, url).await },
-        )?,
-    )?;
-
-    m.set(
-        "patch",
-        lua.create_async_function(|_lua: Lua, (url, body): (String, String)| async move {
-            patch(&_lua, url, body).await
-        })?,
-    )?;
-
-    m.set(
-        "head",
-        lua.create_async_function(|_lua: Lua, url: String| async move { head(&_lua, url).await })?,
     )?;
 
     lua.globals().set("requests", m)?;
