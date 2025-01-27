@@ -1,9 +1,56 @@
+#[cfg(feature = "json")]
 mod json;
+#[cfg(not(feature = "json"))]
+mod json {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "logger")]
 mod logger;
+#[cfg(not(feature = "logger"))]
+mod logger {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "lru_cache")]
 mod lru_cache;
+#[cfg(not(feature = "lru_cache"))]
+mod lru_cache {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "requests")]
 mod requests;
-mod sqlite;
+#[cfg(not(feature = "requests"))]
+mod requests {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "uuid")]
 mod uuid;
+#[cfg(not(feature = "uuid"))]
+mod uuid {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sqlite")]
+mod sqlite;
+#[cfg(not(feature = "sqlite"))]
+mod sqlite {
+    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
+        Ok(())
+    }
+}
 
 use std::{
     env, fs,
@@ -13,10 +60,9 @@ use std::{
 };
 
 use actix_web::{
-    guard::Method,
     http::Method,
-    web::{self, Data},
-    App, HttpRequest, HttpResponse, HttpServer, Responder,
+    web::{self},
+    App, HttpResponse, HttpServer, Responder,
 };
 use mlua::{Function, Lua};
 

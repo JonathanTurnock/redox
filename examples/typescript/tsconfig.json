@@ -8,7 +8,6 @@
     "strict": true
   },
   "tstl": {
-    "luaTarget": "5.4",
     "luaBundle": "app.bundle.lua",
     "luaBundleEntry": "./app.ts"
   }

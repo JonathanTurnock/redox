@@ -1,4 +1,4 @@
-# log4rs.yml
+# logger.yml
 refresh_rate: 30 seconds
 
 appenders:

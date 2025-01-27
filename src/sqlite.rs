@@ -1,4 +1,4 @@
-use mlua::{Lua, Result, Table, UserData, UserDataMethods, Value};
+use mlua::{IntoLua, Lua, Result, Table, UserData, UserDataMethods, Value};
 use sqlx::{Column, Row, SqlitePool};
 
 struct _SqliteConnection {
@@ -28,13 +28,13 @@ impl UserData for _SqliteConnection {
                 for (idx, column) in row.columns().iter().enumerate() {
                     let column_name = column.name();
                     let value: Value = match row.try_get_unchecked::<Option<String>, _>(idx) {
-                        Ok(Some(val)) => Value::String(lua.create_string(&val)?),
+                        Ok(Some(val)) => val.into_lua(&lua).unwrap(),
                         Ok(None) => Value::Nil,
                         Err(_) => match row.try_get_unchecked::<Option<i64>, _>(idx) {
-                            Ok(Some(val)) => Value::Integer(val),
+                            Ok(Some(val)) => val.into_lua(&lua).unwrap(),
                             Ok(None) => Value::Nil,
                             Err(_) => match row.try_get_unchecked::<Option<f64>, _>(idx) {
-                                Ok(Some(val)) => Value::Number(val),
+                                Ok(Some(val)) => val.into_lua(&lua).unwrap(),
                                 Ok(None) => Value::Nil,
                                 Err(_) => Value::Nil, // Fallback for unsupported types
                             },
