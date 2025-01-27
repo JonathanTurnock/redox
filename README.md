@@ -21,7 +21,6 @@ Much of the current impl is built to get a POC running and evaluate benchmarks t
 ### Contributing factors to proceeding with Redox:
 - **Ease of Use:** Redox developers can build a web microservice with actual utility using the standard APIs alone.
 - **Extensibility:** Developers can write native code in Rust and expose it as a library for Lua to optimize performance and this can be done with minimal experience in Rust.
-- **Adaptability:** Redox allows developers to build a runtime tailored to their needs, selecting only the features they require.
 - **Performance:** Redox is able to **at least** match the performance of other scripting runtimes with comparable benchmarks for the same overall functionality.
 - **Security:** Redox minimizes the attack surface and binary size by allowing developers to build a runtime with only the features they need.
 - **Scalability:** Redox supports both horizontal and vertical scalability, running efficiently on a single-core setup or scaling to multicore systems with multiple workers. Redox is able to allow services to act as an "L1" Cache with logic with performance not being degraded by the volume of data in the cache (GC Overdrive).
