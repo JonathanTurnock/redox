@@ -1,5 +1,5 @@
 {
-  "name": "rustful",
+  "name": "redox",
   "version": "1.0.0",
   "scripts": {
     "build": "npx tstl"

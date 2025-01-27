@@ -1,6 +1,6 @@
 {
     "workspace": {
-      "library": ["./rustful.lua"],
+      "library": ["./redox.lua"],
       "checkThirdParty": false
     }
   }

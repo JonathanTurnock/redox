@@ -8,12 +8,12 @@ Redox is a scriptable runtime designed for building web microservices, leveragin
 
 Currently in the research phase, Redox aims to deliver a high-performance, scriptable runtime tailored for web microservices. Its design focuses on using a scripting language (Lua) for frequently changing business logic, while performance-critical tasks are handled natively.
 
-Much of the current impl is built to get a POC running and evaluate benchmarks to see if the concept is viable and well-founded or if it's not actually solving the core problem.
+Much of the current impl is built to get a POC running and evaluate benchmarks in real world applications, to see if the concept is viable and well-founded or if it's not actually solving any problems.
 
 ### Core Features:
-- **Rust Core:** The runtime is built in Rust, featuring a collection of pre-exposed native components with user-friendly APIs for web service development.
-- **Lua Scripting:** Lua is the primary scripting language, offering a simple yet powerful tool for business logic and data manipulation.
 - **Battery-Included:** Redox provides a rich set of APIs, sourced from the Rust ecosystem, wrapped in Lua for ease of use.
+- **Rust Core:** The runtime is built in Rust, featuring a collection of pre-exposed native components with user-friendly APIs for web service development.
+- **Lua Scripting:** Lua is the scripting language, offering a simple yet powerful tool for business logic and data manipulation.
 - **Close to Metal:** For performance-critical tasks, developers can write native code in Rust (Or any other i.e. C, C++, Zig etc) and expose it as a library for Lua.
 - **Contributions Welcome:** Redox is open-source and welcomes contributions from the community to build a wide collection of standard APIs and libraries.
 - **Async Runtime:** Redox is built on top of the async runtime Tokio, allowing for efficient handling of I/O-bound tasks.
@@ -97,6 +97,12 @@ cargo build --release --features distro-web  # ~9MB binary
 ## Context
 
 Please see [CONTEXT.md](CONTEXT.md) for more information on the motivation behind Redox and its vision.
+
+## Performance
+
+Please see the [README.md](benchmarks/README.md) in the benchmarks directory for more information on the performance benchmarks.
+
+We would greatly welcome any contributions to the benchmarks, as well as any contributions to make them more comprehensive and reflective of popular frequently used architectural patterns.
 
 ## Contributing
 

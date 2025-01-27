@@ -1790,6 +1790,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "log",
+ "log4rs",
+ "lru",
+ "mlua",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1932,23 +1949,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustful"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "log",
- "log4rs",
- "lru",
- "mlua",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "uuid",
 ]
 
 [[package]]
