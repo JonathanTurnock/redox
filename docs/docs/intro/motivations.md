@@ -32,4 +32,4 @@ local function get_todos()
 end
 ```
 
-In the example above, the `requests.get` function is an [async operation](src/requests.rs), but the Lua function is written in a synchronous style.
+In the example above, the `requests.get` function is an async operation, but the Lua function is written in a synchronous style.
