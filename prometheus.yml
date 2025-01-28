@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s # Set the default scrape interval to 15 seconds.
+
+scrape_configs:
+  - job_name: 'redox'
+    scrape_interval: 15s
+    static_configs:
+      - targets: [ 'redox:8080', 'bun:8081' ]
