@@ -1,9 +1,9 @@
 use lru::LruCache;
-use mlua::{Lua, Result, UserData, UserDataMethods, Value};
+use mlua::{Lua, LuaSerdeExt, Result, UserData, UserDataMethods, Value};
 use std::num::NonZero;
 
 struct _LruCache {
-    cache: LruCache<String, Value>,
+    cache: LruCache<String, String>,
 }
 
 impl _LruCache {
@@ -15,15 +15,19 @@ impl _LruCache {
 
 impl UserData for _LruCache {
     fn add_methods<'lua, M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method_mut("get", |_lua, this, key: String| {
+        methods.add_method_mut("get", |lua, this, key: String| {
             match this.cache.get(&key) {
-                Some(value) => Ok(value.clone()),
+                Some(value) => {
+                    let serde_value = serde_json::from_str::<serde_json::Value>(&value).unwrap();
+                    let lua_value = lua.to_value(&serde_value).unwrap();
+                    Ok(lua_value)
+                },
                 None => Ok(Value::Nil),
             }
         });
 
-        methods.add_method_mut("set", |_lua, this, (key, value): (String, Value)| {
-            this.cache.put(key, value);
+        methods.add_method_mut("set", |lua, this, (key, value): (String, Value)| {
+            this.cache.put(key, serde_json::to_string(&value).unwrap());
             Ok(())
         });
     }

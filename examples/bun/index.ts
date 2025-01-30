@@ -2,6 +2,7 @@ import express from "express";
 import promBundle from "express-prom-bundle";
 import sqlite3 from "bun:sqlite";
 import client from 'prom-client';
+import { LRUCache } from 'lru-cache'
 
 const app = express();
 
@@ -29,13 +30,19 @@ appDb.run("INSERT OR REPLACE INTO users (id, name) VALUES (?, ?)", [1, "Alice"])
 // Enable the default metrics
 client.collectDefaultMetrics();
 
+const cache = new LRUCache<string, any>({max: 5000000});
+
 app.get("/", (req, res) => {
     try {
-        const user: any = appDb.query("SELECT id, name FROM users WHERE id = ?").get(1);
+        const user: any = appDb.query("SELECT id, name FROM users WHERE id = 1").get();
         if (user) {
             user.uuid = crypto.randomUUID();
         }
-        res.json(user);
+
+        cache.set(user.uuid, user);
+
+        JSON.stringify(user);
+        res.sendStatus(200)
     } catch (error) {
         console.error("Error fetching user:", error);
         res.status(500).send("Error fetching user.");

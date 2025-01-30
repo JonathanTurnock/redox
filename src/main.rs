@@ -57,20 +57,25 @@ use actix_web::body::MessageBody;
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::{header, Method};
 use actix_web::middleware::{from_fn, Next};
+use actix_web::web::Data;
 use actix_web::{get, middleware, web, App, Error, HttpResponse, HttpServer, Responder};
 use log::{error, info};
-use metrics::{counter, describe_gauge, gauge, histogram};
+use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use mlua::{Function, Lua, LuaOptions, StdLib};
 use std::path::Path;
-use std::{env, process, str::FromStr, sync::{Arc, RwLock}, time::Duration};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-use tokio::task_local;
+use std::{
+    env,
+    str::FromStr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::time::sleep;
 
 struct AppData {
-    lua: Lua,
-    prometheus_handle: PrometheusHandle,
+    lua: Arc<Lua>,
+    prometheus_handle: Arc<PrometheusHandle>,
 }
 
 #[derive(Clone)]
@@ -124,22 +129,29 @@ async fn metrics_endpoint(app_data: web::Data<AppData>) -> impl Responder {
     if let Some(tasks) = process.tasks() {
         tasks.iter().for_each(|pid| {
             if let Some(process) = sys.process(*pid) {
-                gauge!("process_memory", "pid" => process.pid().to_string()).set(process.memory() as f64);
-                gauge!("process_virtual_memory","pid" => process.pid().to_string()).set(process.virtual_memory() as f64);
+                gauge!("process_memory", "pid" => process.pid().to_string())
+                    .set(process.memory() as f64);
+                gauge!("process_virtual_memory","pid" => process.pid().to_string())
+                    .set(process.virtual_memory() as f64);
                 gauge!("cpu_usage", "pid" => process.pid().to_string() ).set(process.cpu_usage());
             }
         });
     } else {
         gauge!("process_memory", "pid" => process.pid().to_string()).set(process.memory() as f64);
-        gauge!("process_virtual_memory","pid" => process.pid().to_string()).set(process.virtual_memory() as f64);
+        gauge!("process_virtual_memory","pid" => process.pid().to_string())
+            .set(process.virtual_memory() as f64);
         gauge!("cpu_usage", "pid" => process.pid().to_string() ).set(process.cpu_usage());
     }
 
-    HttpResponse::Ok().insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8)).body(app_data.prometheus_handle.render())
+    HttpResponse::Ok()
+        .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
+        .body(app_data.prometheus_handle.render())
 }
 
-fn get_lua_instance(entry: &String, handlers: &mut Vec<Handler>) -> Lua {
+fn get_lua_instance(entry: &String) -> (Lua, Arc<RwLock<Vec<Handler>>>) {
+    info!("Creating Lua instance...");
     let lua = Lua::new_with(StdLib::ALL, LuaOptions::default()).unwrap();
+    let handlers = Arc::new(RwLock::new(Vec::new()));
 
     uuid::inject_module(&lua).unwrap();
     requests::inject_module(&lua).unwrap();
@@ -148,10 +160,11 @@ fn get_lua_instance(entry: &String, handlers: &mut Vec<Handler>) -> Lua {
     sqlite::inject_module(&lua).unwrap();
     lru_cache::inject_module(&lua).unwrap();
 
-
     lua.globals()
         .set("get", {
+            let handlers = Arc::clone(&handlers);
             lua.create_function_mut(move |_, (path, function): (String, Function)| {
+                let mut handlers = handlers.write().unwrap();
                 handlers.push(Handler {
                     method: "GET".to_string(),
                     path,
@@ -159,7 +172,7 @@ fn get_lua_instance(entry: &String, handlers: &mut Vec<Handler>) -> Lua {
                 });
                 Ok(())
             })
-                .unwrap();
+            .unwrap()
         })
         .unwrap();
 
@@ -170,12 +183,14 @@ fn get_lua_instance(entry: &String, handlers: &mut Vec<Handler>) -> Lua {
                 tokio::time::sleep(Duration::from_millis(n)).await;
                 Ok(())
             })
-                .unwrap(),
+            .unwrap(),
         )
         .unwrap();
 
-
-    let compiler = mlua::Compiler::new().set_optimization_level(1).set_debug_level(1).set_coverage_level(0);
+    let compiler = mlua::Compiler::new()
+        .set_optimization_level(2)
+        .set_debug_level(0)
+        .set_coverage_level(0);
     lua.set_compiler(compiler);
 
     match lua.load(Path::new(entry)).exec() {
@@ -185,13 +200,12 @@ fn get_lua_instance(entry: &String, handlers: &mut Vec<Handler>) -> Lua {
         }
     }
 
-    lua
+    (lua, handlers)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     log4rs::init_file("logger.yml", Default::default()).unwrap();
-
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -203,19 +217,18 @@ async fn main() -> std::io::Result<()> {
 
     match command {
         command if command == "run" => {
-            let lua = get_lua_instance(&lua_file, &mut Vec::new());
+            let (lua, _) = get_lua_instance(&lua_file);
+
             info!("Running Lua script: {}", lua_file);
             info!("Running LUA global main function...");
             match lua.globals().get::<Function>("main") {
-                Ok(main) => {
-                    match main.call_async::<()>(()).await {
-                        Ok(_) => Ok(()),
-                        Err(err) => {
-                            println!("{err}");
-                            std::process::exit(1);
-                        }
+                Ok(main) => match main.call_async::<()>(()).await {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        println!("{err}");
+                        std::process::exit(1);
                     }
-                }
+                },
                 Err(err) => {
                     error!("Error calling main function: {}", err);
                     std::process::exit(1);
@@ -223,18 +236,24 @@ async fn main() -> std::io::Result<()> {
             }
         }
         command if command == "serve" => {
-            let prometheus_handle = PrometheusBuilder::new().install_recorder().unwrap();
+            let prometheus_handle = PrometheusBuilder::new()
+                .install_recorder()
+                .expect("Failed to create PrometheusBuilder");
+            let (lua, handlers) = get_lua_instance(&lua_file);
+
+            let app_data = Data::new(AppData {
+                lua: Arc::new(lua),
+                prometheus_handle: Arc::new(prometheus_handle),
+            });
 
             HttpServer::new(move || {
-                let mut handlers = Vec::new();
-                let lua = get_lua_instance(&lua_file, &mut handlers);
-                let app_data = web::Data::new(AppData {
-                    lua,
-                    prometheus_handle: prometheus_handle.clone(),
-                });
-                let mut app = App::new().wrap(middleware::Logger::default()).wrap(from_fn(http_requests_middleware)).app_data(app_data.clone()).service(metrics_endpoint).service(metrics_endpoint);
+                let mut app = App::new()
+                    .wrap(middleware::Logger::default())
+                    .wrap(from_fn(http_requests_middleware))
+                    .app_data(Data::clone(&app_data))
+                    .service(metrics_endpoint);
 
-                for handler in handlers.iter() {
+                for handler in handlers.read().unwrap().iter() {
                     let lua_fn = Arc::new(handler.function.clone());
                     app = app.route(
                         &handler.path,
@@ -243,7 +262,9 @@ async fn main() -> std::io::Result<()> {
                             async move {
                                 match lua_fn.call_async::<String>(()).await {
                                     Ok(response) => HttpResponse::Ok().body(response),
-                                    Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+                                    Err(err) => {
+                                        HttpResponse::InternalServerError().body(err.to_string())
+                                    }
                                 }
                             }
                         }),
@@ -252,10 +273,10 @@ async fn main() -> std::io::Result<()> {
 
                 app
             })
-                .shutdown_timeout(5)
-                .bind(("0.0.0.0", 8080))?
-                .run()
-                .await
+            .shutdown_timeout(5)
+            .bind(("0.0.0.0", 8080))?
+            .run()
+            .await
         }
         _ => {
             println!("Unknown command: {}", command);

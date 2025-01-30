@@ -8,9 +8,10 @@ services:
       RUST_LOG: debug
     ports:
       - "8080:8080"
-    mem_limit: 2048m
-    mem_reservation: 2048m
+    mem_limit: 4096m
+    mem_reservation: 4096m
     cpus: 4.0
+    cpu_count: 4
 
   bun:
     build:
@@ -22,6 +23,18 @@ services:
     mem_limit: 2048m
     mem_reservation: 2048m
     cpus: 4.0
+    cpu_count: 4
+
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_user
+      POSTGRES_DB: hr
+    volumes:
+      - ./examples/docker-entrypoint-initdb.d/:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
 
   prometheus:
     image: prom/prometheus:latest
