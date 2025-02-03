@@ -1,6 +1,8 @@
 use mlua::{Lua, Result};
+use tracing::instrument;
 use uuid::Uuid;
 
+#[instrument(name = "uuid.v4")]
 fn v4(_: &Lua, (): ()) -> Result<String> {
     let uuid = Uuid::new_v4();
     Ok(uuid.to_string())

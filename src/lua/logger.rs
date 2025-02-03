@@ -1,23 +1,28 @@
 use mlua::{Lua, Result};
+use tracing::instrument;
 
+#[instrument(name = "logger.debug")]
 fn debug(_: &Lua, string: String) -> Result<()> {
     log::debug!("{}", string);
 
     Ok(())
 }
 
+#[instrument(name = "logger.info")]
 fn info(_: &Lua, string: String) -> Result<()> {
     log::info!("{}", string);
 
     Ok(())
 }
 
+#[instrument(name = "logger.warn")]
 fn warn(_: &Lua, string: String) -> Result<()> {
     log::warn!("{}", string);
 
     Ok(())
 }
 
+#[instrument(name = "logger.error")]
 fn error(_: &Lua, string: String) -> Result<()> {
     log::error!("{}", string);
 

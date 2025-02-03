@@ -26,7 +26,7 @@ impl UserData for _LruCache {
             }
         });
 
-        methods.add_method_mut("set", |lua, this, (key, value): (String, Value)| {
+        methods.add_method_mut("set", |_lua, this, (key, value): (String, Value)| {
             this.cache.put(key, serde_json::to_string(&value).unwrap());
             Ok(())
         });

@@ -1,286 +1,96 @@
-#[cfg(feature = "json")]
-mod json;
-#[cfg(not(feature = "json"))]
-mod json {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
+mod app_args;
+mod lua;
+mod run;
+mod server;
+mod server_config;
+mod test;
 
-#[cfg(feature = "logger")]
-mod logger;
-#[cfg(not(feature = "logger"))]
-mod logger {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "lru_cache")]
-mod lru_cache;
-#[cfg(not(feature = "lru_cache"))]
-mod lru_cache {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "requests")]
-mod requests;
-#[cfg(not(feature = "requests"))]
-mod requests {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "uuid")]
-mod uuid;
-#[cfg(not(feature = "uuid"))]
-mod uuid {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "sqlite")]
-mod sqlite;
-
-#[cfg(not(feature = "sqlite"))]
-mod sqlite {
-    pub fn inject_module(_: &mlua::Lua) -> Result<(), mlua::Error> {
-        Ok(())
-    }
-}
-
-use actix_web::body::MessageBody;
-use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::http::{header, Method};
-use actix_web::middleware::{from_fn, Next};
-use actix_web::web::Data;
-use actix_web::{get, middleware, web, App, Error, HttpResponse, HttpServer, Responder};
-use log::{error, info};
-use metrics::{counter, gauge, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use mlua::{Function, Lua, LuaOptions, StdLib};
-use std::path::Path;
-use std::{
-    env,
-    str::FromStr,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-use tokio::time::sleep;
-
-struct AppData {
-    lua: Arc<Lua>,
-    prometheus_handle: Arc<PrometheusHandle>,
-}
-
-#[derive(Clone)]
-struct Handler {
-    method: String,
-    path: String,
-    function: Function,
-}
-
-async fn http_requests_middleware(
-    req: ServiceRequest,
-    next: Next<impl MessageBody>,
-) -> Result<ServiceResponse<impl MessageBody>, Error> {
-    counter!("http_requests_total").increment(1);
-    let start = std::time::Instant::now();
-
-    match next.call(req).await {
-        Ok(response) => {
-            let duration = start.elapsed().as_secs_f64();
-            counter!("http_requests_total", "status" => response.status().clone().to_string(), "path" => response.request().path().to_string(), "method" => response.request().method().to_string()).increment(1);
-            histogram!("http_request_duration_seconds", "status" => response.status().clone().to_string(), "path" => response.request().path().to_string(), "method" => response.request().method().to_string()).record(duration);
-            Ok(response)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-#[get("/metrics")]
-async fn metrics_endpoint(app_data: web::Data<AppData>) -> impl Responder {
-    let mut sys = System::new_all();
-
-    gauge!("lua_used_memory").set(app_data.lua.used_memory() as f64);
-    gauge!("used_memory").set(sys.used_memory() as f64);
-    gauge!("total_memory").set(sys.total_memory() as f64);
-    gauge!("total_swap").set(sys.total_swap() as f64);
-    gauge!("used_swap").set(sys.used_swap() as f64);
-    gauge!("cpus").set(sys.cpus().len() as f64);
-    gauge!("global_cpu_usage").set(sys.global_cpu_usage());
-
-    // Wait a bit because CPU usage is based on diff.
-    sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
-    // Refresh CPU usage to get actual value.
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cpu(),
-    );
-
-    let process = sys.process(sysinfo::get_current_pid().unwrap()).unwrap();
-
-    if let Some(tasks) = process.tasks() {
-        tasks.iter().for_each(|pid| {
-            if let Some(process) = sys.process(*pid) {
-                gauge!("process_memory", "pid" => process.pid().to_string())
-                    .set(process.memory() as f64);
-                gauge!("process_virtual_memory","pid" => process.pid().to_string())
-                    .set(process.virtual_memory() as f64);
-                gauge!("cpu_usage", "pid" => process.pid().to_string() ).set(process.cpu_usage());
-            }
-        });
-    } else {
-        gauge!("process_memory", "pid" => process.pid().to_string()).set(process.memory() as f64);
-        gauge!("process_virtual_memory","pid" => process.pid().to_string())
-            .set(process.virtual_memory() as f64);
-        gauge!("cpu_usage", "pid" => process.pid().to_string() ).set(process.cpu_usage());
-    }
-
-    HttpResponse::Ok()
-        .insert_header(header::ContentType(mime::TEXT_PLAIN_UTF_8))
-        .body(app_data.prometheus_handle.render())
-}
-
-fn get_lua_instance(entry: &String) -> (Lua, Arc<RwLock<Vec<Handler>>>) {
-    info!("Creating Lua instance...");
-    let lua = Lua::new_with(StdLib::ALL, LuaOptions::default()).unwrap();
-    let handlers = Arc::new(RwLock::new(Vec::new()));
-
-    uuid::inject_module(&lua).unwrap();
-    requests::inject_module(&lua).unwrap();
-    logger::inject_module(&lua).unwrap();
-    json::inject_module(&lua).unwrap();
-    sqlite::inject_module(&lua).unwrap();
-    lru_cache::inject_module(&lua).unwrap();
-
-    lua.globals()
-        .set("get", {
-            let handlers = Arc::clone(&handlers);
-            lua.create_function_mut(move |_, (path, function): (String, Function)| {
-                let mut handlers = handlers.write().unwrap();
-                handlers.push(Handler {
-                    method: "GET".to_string(),
-                    path,
-                    function,
-                });
-                Ok(())
-            })
-            .unwrap()
-        })
-        .unwrap();
-
-    lua.globals()
-        .set(
-            "sleep",
-            lua.create_async_function(move |_lua, n: u64| async move {
-                tokio::time::sleep(Duration::from_millis(n)).await;
-                Ok(())
-            })
-            .unwrap(),
-        )
-        .unwrap();
-
-    let compiler = mlua::Compiler::new()
-        .set_optimization_level(2)
-        .set_debug_level(0)
-        .set_coverage_level(0);
-    lua.set_compiler(compiler);
-
-    match lua.load(Path::new(entry)).exec() {
-        Ok(_) => (),
-        Err(err) => {
-            println!("{err}");
-        }
-    }
-
-    (lua, handlers)
-}
+use crate::app_args::Commands;
+use app_args::AppArgs;
+use clap::Parser;
+use glob::glob;
+use log::{debug, info};
+use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, TracerProvider};
+use tracing::span;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() {
+    let resource = Resource::new(vec![
+        KeyValue::new("service.name", "redox"), // Set your service name here
+        KeyValue::new("service.version", "1.0.0"),
+    ]);
+    
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_export_config(ExportConfig::default())
+        .build()
+        .expect("Failed to create OTLP exporter");
+
+    let tracer = TracerProvider::builder()
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_id_generator(RandomIdGenerator::default())
+        .with_sampler(Sampler::AlwaysOn)
+        .with_resource(resource)
+        .build();
+
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer.tracer("redox"));
+    let subscriber = Registry::default().with(telemetry);
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    let args = AppArgs::parse();
+
     log4rs::init_file("logger.yml", Default::default()).unwrap();
 
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        println!("Usage: {} <command> <lua_file>", args[0]);
-        std::process::exit(1);
-    }
-    let command = args[1].clone();
-    let lua_file = args[2].clone();
+    match args.command {
+        Commands::Serve { port } => {
+            let config = server_config::ServerConfig::new().expect("Failed to load server config");
+            debug!("App Config: {:?}", &config);
+            server::serve(
+                config.entrypoint,
+                config.shutdown_timeout,
+                config.address,
+                port.unwrap_or(config.port),
+            )
+            .await;
+        }
+        Commands::Run { entrypoint } => {
+            info!("Running Lua script: {}", &entrypoint);
+            span!(tracing::Level::INFO, "run", entrypoint = &entrypoint)
+                .in_scope(|| async {
+                    run::run(&entrypoint).await;
+                })
+                .await;
+        }
+        Commands::Test { include } => {
+            info!("Running tests: {}", &include);
 
-    match command {
-        command if command == "run" => {
-            let (lua, _) = get_lua_instance(&lua_file);
+            let files = glob(&include).expect("Failed to read glob pattern");
 
-            info!("Running Lua script: {}", lua_file);
-            info!("Running LUA global main function...");
-            match lua.globals().get::<Function>("main") {
-                Ok(main) => match main.call_async::<()>(()).await {
-                    Ok(_) => Ok(()),
-                    Err(err) => {
-                        println!("{err}");
-                        std::process::exit(1);
+            for file in files {
+                match file {
+                    Ok(path) => {
+                        let path = path.to_str().unwrap().to_string();
+                        span!(tracing::Level::INFO, "test", path = &path)
+                            .in_scope(|| async {
+                                info!("Running test: {}", &path);
+                                test::run(&path).await;
+                            })
+                            .await;
                     }
-                },
-                Err(err) => {
-                    error!("Error calling main function: {}", err);
-                    std::process::exit(1);
+                    Err(e) => {
+                        info!("Failed to read file: {}", e);
+                    }
                 }
             }
         }
-        command if command == "serve" => {
-            let prometheus_handle = PrometheusBuilder::new()
-                .install_recorder()
-                .expect("Failed to create PrometheusBuilder");
-            let (lua, handlers) = get_lua_instance(&lua_file);
-
-            let app_data = Data::new(AppData {
-                lua: Arc::new(lua),
-                prometheus_handle: Arc::new(prometheus_handle),
-            });
-
-            HttpServer::new(move || {
-                let mut app = App::new()
-                    .wrap(middleware::Logger::default())
-                    .wrap(from_fn(http_requests_middleware))
-                    .app_data(Data::clone(&app_data))
-                    .service(metrics_endpoint);
-
-                for handler in handlers.read().unwrap().iter() {
-                    let lua_fn = Arc::new(handler.function.clone());
-                    app = app.route(
-                        &handler.path,
-                        web::method(Method::from_str(&handler.method).unwrap()).to(move || {
-                            let lua_fn = Arc::clone(&lua_fn);
-                            async move {
-                                match lua_fn.call_async::<String>(()).await {
-                                    Ok(response) => HttpResponse::Ok().body(response),
-                                    Err(err) => {
-                                        HttpResponse::InternalServerError().body(err.to_string())
-                                    }
-                                }
-                            }
-                        }),
-                    );
-                }
-
-                app
-            })
-            .shutdown_timeout(5)
-            .bind(("0.0.0.0", 8080))?
-            .run()
-            .await
-        }
-        _ => {
-            println!("Unknown command: {}", command);
-            std::process::exit(1);
-        }
     }
+
+    debug!("Finished...");
 }

@@ -29,6 +29,7 @@ COPY --from=builder /usr/app/target/release/redox /usr/local/bin/redox
 
 COPY examples/lua/app.lua /usr/app/app.lua
 COPY examples/lua/logger.yml /usr/app/logger.yml
+COPY examples/lua/server.yml /usr/app/server.yml
 
 # Command to run the application
-CMD ["redox", "serve", "app.lua"]
+CMD ["redox", "serve"]

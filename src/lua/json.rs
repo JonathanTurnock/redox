@@ -3,6 +3,7 @@ use mlua::prelude::LuaValue;
 use mlua::{Lua, LuaSerdeExt, Result};
 use serde_json::from_str;
 use serde_json::Value;
+use tracing::instrument;
 
 pub fn inject_module(lua: &Lua) -> Result<()> {
     let m = lua.create_table()?;
@@ -13,22 +14,24 @@ pub fn inject_module(lua: &Lua) -> Result<()> {
     Ok(())
 }
 
+#[instrument(name = "json.decode")]
 fn decode(lua: &Lua, string: String) -> Result<LuaValue> {
     debug!("Decoding JSON: {:?}", string);
 
     let serde_value = from_str::<Value>(&string).unwrap();
-    let lua_value = lua.to_value(&serde_value).unwrap();
+    let lua_value = lua.to_value(&serde_value)?;
 
     debug!("Decoded JSON: {:?}", lua_value);
     Ok(lua_value)
 }
 
+#[instrument(name = "json.encode")]
 fn encode(lua: &Lua, lua_value: LuaValue) -> Result<String> {
     debug!("Encoding Lua value: {:?}", lua_value);
 
     let json_string = serde_json::to_string(&lua_value).unwrap();
-    let lua_string = lua.create_string(&json_string).unwrap();
+    let lua_string = lua.create_string(&json_string)?;
 
     debug!("Encoded JSON: {:?}", lua_string);
-    Ok(String::from(json_string))
+    Ok(json_string)
 }

@@ -30,7 +30,9 @@ appDb.run("INSERT OR REPLACE INTO users (id, name) VALUES (?, ?)", [1, "Alice"])
 // Enable the default metrics
 client.collectDefaultMetrics();
 
-const cache = new LRUCache<string, any>({max: 5000000});
+app.get("/hello", (req, res) => {
+    res.json({message: "Hello, world!"});
+});
 
 app.get("/", (req, res) => {
     try {
@@ -38,8 +40,6 @@ app.get("/", (req, res) => {
         if (user) {
             user.uuid = crypto.randomUUID();
         }
-
-        cache.set(user.uuid, user);
 
         JSON.stringify(user);
         res.sendStatus(200)

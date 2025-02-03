@@ -58,6 +58,23 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
 
+  # https://www.jaegertracing.io/docs/next-release/deployment/#:~:text=At%20default%20settings%20jaeger%2Dcollector%20exposes%20the%20following%20ports%3A
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"
+      - "16687:16687"
+      - "4317:4317"
+      - "4318:4318"
+      - "14268:14268"
+      - "14269:14269"
+      - "9411:9411"
+      - "14250:14250"
+    environment:
+      COLLECTOR_ZIPKIN_HTTP_PORT: 9411
+      LOG_LEVEL: debug
+      COLLECTOR_OTLP_ENABLED: true
 volumes:
   prometheus-data:
   grafana-data:

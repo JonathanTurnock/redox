@@ -1,0 +1,16 @@
+# The entrypoint for the application (relative to the cwd)
+entrypoint: examples/lua/app.lua
+
+# The address to bind to
+address: 0.0.0.0
+
+# The port to bind to
+port: 8080
+
+# Keep-alive timeout for client connections
+# see https://actix.rs/docs/server/#keep-alive
+keep_alive: 75
+
+# Shutdown timeout for the server
+# see https://actix.rs/docs/server/#graceful-shutdown
+shutdown_timeout: 5
